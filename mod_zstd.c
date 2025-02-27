@@ -136,20 +136,33 @@ static zstd_ctx_t *create_ctx(zstd_server_config_t* conf,
     zstd_ctx_t *ctx = apr_pcalloc(pool, sizeof(*ctx));
     ctx->cctx = ZSTD_createCCtx();
 
-    rvsp = ZSTD_CCtx_setParameter(ctx->cctx, ZSTD_c_compressionLevel, conf->compression_level);
+    rvsp = ZSTD_CCtx_setParameter(ctx->cctx, ZSTD_c_compressionLevel,
+		                          conf->compression_level);
     if (ZSTD_isError(rvsp)) {
-        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, APLOGNO(30301)"[CREATE_CTX] ZSTD_c_compressionLevel(%d): %s",conf->compression_level,ZSTD_getErrorName(rvsp));
+        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, APLOGNO(30301)
+		              "[CREATE_CTX] ZSTD_c_compressionLevel(%d): %s",
+		              conf->compression_level,
+		              ZSTD_getErrorName(rvsp));
     } else {
         ZSTD_CCtx_getParameter(ctx->cctx, ZSTD_c_compressionLevel, &zstdparam);
-        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, APLOGNO(30302)"[CREATE_CTX] ZSTD_c_compressionLevel(%d): %d",conf->compression_level,zstdparam);
+        ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r,
+		              "[CREATE_CTX] ZSTD_c_compressionLevel(%d): %d",
+		              conf->compression_level,
+		              zstdparam);
     }
 
     rvsp = ZSTD_CCtx_setParameter(ctx->cctx, ZSTD_c_nbWorkers, conf->workers);
     if (ZSTD_isError(rvsp)) {
-        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, APLOGNO(30303)"[CREATE_CTX] ZSTD_c_nbWorkers(%d): %s",conf->workers,ZSTD_getErrorName(rvsp));
+        ap_log_rerror(APLOG_MARK, APLOG_WARNING, 0, r, APLOGNO(30303)
+		              "[CREATE_CTX] ZSTD_c_nbWorkers(%d): %s",
+		              conf->workers,
+		              ZSTD_getErrorName(rvsp));
     } else {
         ZSTD_CCtx_getParameter(ctx->cctx, ZSTD_c_nbWorkers, &zstdparam);
-        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, APLOGNO(30304)"[CREATE_CTX] ZSTD_c_nbWorkers(%d): %d",conf->workers,zstdparam);
+        ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r,
+		              "[CREATE_CTX] ZSTD_c_nbWorkers(%d): %d",
+		              conf->workers,
+		              zstdparam);
     }
 
     apr_pool_cleanup_register(pool, ctx, cleanup_ctx, apr_pool_cleanup_null);
@@ -226,8 +239,9 @@ static apr_status_t flush(zstd_ctx_t *ctx,
         }
 
         if (output.pos > 0) {
-            apr_bucket *b = apr_bucket_heap_create(out_buffer, output.pos, NULL,
-                ctx->bb->bucket_alloc);
+            apr_bucket *b = apr_bucket_heap_create(out_buffer, output.pos,
+		              		              		   NULL, 
+						              		       ctx->bb->bucket_alloc);
             APR_BRIGADE_INSERT_TAIL(ctx->bb, b);
             ctx->total_out += output.pos;
         }

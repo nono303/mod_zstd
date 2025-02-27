@@ -21,8 +21,6 @@
 
 #include <zstd.h>
 #include "mod_zstd.h"
-#include "zstd_private.h"
-
 module AP_MODULE_DECLARE_DATA zstd_module;
 
 typedef enum {
@@ -33,7 +31,6 @@ typedef enum {
 
 typedef struct zstd_server_config_t {
     int compression_level, workers;
-    int window_size;
     etag_mode_e etag_mode;
     const char *note_ratio_name;
     const char *note_input_name;
@@ -51,9 +48,8 @@ static void *create_server_config(apr_pool_t *p, server_rec *s) {
 
     zstd_server_config_t *conf = apr_pcalloc(p, sizeof(*conf));
     conf->compression_level = 15;
-    conf->window_size = 128;
     conf->etag_mode = ETAG_MODE_ADDSUFFIX;
-
+	
     /* fixed */
     conf->workers = 16;
 
@@ -101,22 +97,6 @@ static const char *set_compression_level(cmd_parms *cmd, void *dummy,
     return NULL;
 }
 
-static const char *set_window_size(cmd_parms *cmd, void *dummy,
-                                   const char *arg) {
-
-	zstd_server_config_t *conf =
-        ap_get_module_config(cmd->server->module_config, &zstd_module);
-
-	int val = atoi(arg);
-    if (val < 0 || val > 101) {
-        return apr_psprintf(cmd->pool, "ZstdWindowSize = (ZSTD_c_windowLog) must be between %d and %d",
-            0, 101);
-    }
-    conf->window_size = val;
-
-	return NULL;
-}
-
 static const char *set_etag_mode(cmd_parms *cmd, void *dummy,
                                  const char *arg) {
  
@@ -156,26 +136,18 @@ static zstd_ctx_t *create_ctx(zstd_server_config_t* conf,
 
     rvsp = ZSTD_CCtx_setParameter(ctx->cctx, ZSTD_c_compressionLevel, conf->compression_level);
     if (ZSTD_isError(rvsp)) {
-        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, APLOGNO(303)"[CREATE_CTX] ZSTD_c_compressionLevel(%d): %s",conf->compression_level,ZSTD_getErrorName(rvsp));
+        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, APLOGNO(30301)"[CREATE_CTX] ZSTD_c_compressionLevel(%d): %s",conf->compression_level,ZSTD_getErrorName(rvsp));
     } else {
         ZSTD_CCtx_getParameter(ctx->cctx, ZSTD_c_compressionLevel, &zstdparam);
-        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, APLOGNO(303)"[CREATE_CTX] ZSTD_c_compressionLevel(%d): %d",conf->compression_level,zstdparam);
-    }
-
-    rvsp = ZSTD_CCtx_setParameter(ctx->cctx, ZSTD_c_windowLog, conf->window_size);
-    if (ZSTD_isError(rvsp)) {
-        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, APLOGNO(303)"[CREATE_CTX] ZSTD_c_windowLog(%d): %s {min: %d max: %d def: %d}",conf->window_size, ZSTD_getErrorName(rvsp),ZSTD_WINDOWLOG_MIN, ZSTD_WINDOWLOG_MAX, ZSTD_WINDOWLOG_LIMIT_DEFAULT);
-    } else {
-        ZSTD_CCtx_getParameter(ctx->cctx, ZSTD_c_windowLog, &zstdparam);
-        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, APLOGNO(303)"[CREATE_CTX] ZSTD_c_windowLog(%d): %d",conf->window_size,zstdparam);
+        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, APLOGNO(30302)"[CREATE_CTX] ZSTD_c_compressionLevel(%d): %d",conf->compression_level,zstdparam);
     }
 
     rvsp = ZSTD_CCtx_setParameter(ctx->cctx, ZSTD_c_nbWorkers, conf->workers);
     if (ZSTD_isError(rvsp)) {
-        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, APLOGNO(303)"[CREATE_CTX] ZSTD_c_nbWorkers(%d): %s",conf->workers,ZSTD_getErrorName(rvsp));
+        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, APLOGNO(30303)"[CREATE_CTX] ZSTD_c_nbWorkers(%d): %s",conf->workers,ZSTD_getErrorName(rvsp));
     } else {
         ZSTD_CCtx_getParameter(ctx->cctx, ZSTD_c_nbWorkers, &zstdparam);
-        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, APLOGNO(303)"[CREATE_CTX] ZSTD_c_nbWorkers(%d): %d",conf->workers,zstdparam);
+        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, APLOGNO(30304)"[CREATE_CTX] ZSTD_c_nbWorkers(%d): %d",conf->workers,zstdparam);
     }
 
     apr_pool_cleanup_register(pool, ctx, cleanup_ctx, apr_pool_cleanup_null);
@@ -206,7 +178,7 @@ static apr_status_t process_chunk(zstd_ctx_t *ctx,
          */
         remaining = ZSTD_compressStream2(ctx->cctx, &output, &input, ZSTD_e_flush);
         if (ZSTD_isError(remaining)) {
-            ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r, APLOGNO(03459)
+            ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r, APLOGNO(30305)
                 "Error while compressing data: %s",
                 ZSTD_getErrorName(remaining));
             return APR_EGENERAL;
@@ -244,7 +216,7 @@ static apr_status_t flush(zstd_ctx_t *ctx,
     do {
         remaining = ZSTD_compressStream2(ctx->cctx, &output, &input, mode);
         if (ZSTD_isError(remaining)) {
-            ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r, APLOGNO(03460)
+            ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r, APLOGNO(30306)
                 "Error while flushing data: %s",
                 ZSTD_getErrorName(remaining));
             return APR_EGENERAL;
@@ -513,12 +485,29 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb) {
     return APR_SUCCESS;
 }
 
+static apr_status_t zstd_post_config(apr_pool_t *p, apr_pool_t *plog,
+                                              apr_pool_t *ptemp, server_rec *s) {
+
+	zstd_server_config_t *conf;
+    conf = ap_get_module_config(s->module_config, &zstd_module);
+    ap_log_error(APLOG_MARK, APLOG_INFO, 0, s, APLOGNO(30307)
+                 "mod_zstd cl:%d, wk:%d (v%s, zstd %s)", 
+                 conf->compression_level, 
+                 conf->workers, 
+                 MOD_ZSTD_VERSION,
+                 ZSTD_versionString());
+	return OK;
+}
+
 static void register_hooks(apr_pool_t *p) {
+	
     ap_register_output_filter("ZSTD_COMPRESS", compress_filter, NULL,
                               AP_FTYPE_CONTENT_SET);
+	ap_hook_post_config(zstd_post_config, NULL, NULL, APR_HOOK_LAST);
 }
 
 static const command_rec cmds[] = {
+	
     AP_INIT_TAKE12("ZstdFilterNote", set_filter_note,
                    NULL, RSRC_CONF,
                    "Set a note to report on compression ratio"),
@@ -526,9 +515,6 @@ static const command_rec cmds[] = {
                   NULL, RSRC_CONF,
                   "Compression level between min and max (higher level means "
                   "better compression but slower)"),
-    AP_INIT_TAKE1("ZstdWindowSize", set_window_size,
-                  NULL, RSRC_CONF,
-                  "Maximum allowed back-reference distance, expressed as power of 2."),
     AP_INIT_TAKE1("ZstdAlterETag", set_etag_mode,
                   NULL, RSRC_CONF,
                   "Set how mod_zstd should modify ETag response headers: "

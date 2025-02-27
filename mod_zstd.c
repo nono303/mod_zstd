@@ -206,14 +206,20 @@ static apr_status_t process_chunk(zstd_ctx_t *ctx,
     char *out_buffer = apr_palloc(f->r->pool, out_size);
     ZSTD_outBuffer output = { out_buffer, out_size, 0 };
 
-    size_t remaining = ZSTD_compressStream2(ctx->cctx, &output, &input, ZSTD_e_continue);
-    if (ZSTD_isError(remaining)) {
-        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r, APLOGNO(03459)
-            "Error while compressing data: %s",
-            ZSTD_getErrorName(remaining));
-        return APR_EGENERAL;
-    }
-
+    size_t remaining;
+	do{
+		/*
+		 * https://facebook.github.io/zstd/zstd_manual.html#Chapter8
+		 * ex. https://fossies.org/linux/cyrus-imapd/imap/httpd.c
+		 */
+		remaining = ZSTD_compressStream2(ctx->cctx, &output, &input, ZSTD_e_flush);
+	    if (ZSTD_isError(remaining)) {
+	        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r, APLOGNO(03459)
+	            "Error while compressing data: %s",
+	            ZSTD_getErrorName(remaining));
+	        return APR_EGENERAL;
+	    }
+	} while (remaining || (input.pos != input.size));
     if (output.pos > 0) {
         apr_bucket *b = apr_bucket_heap_create(out_buffer, output.pos, NULL,
             ctx->bb->bucket_alloc);
@@ -440,8 +446,8 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb)
         f->ctx = ctx;
     }
 
-    while (!APR_BRIGADE_EMPTY(bb)) {
-        apr_bucket *e = APR_BRIGADE_FIRST(bb);
+	apr_bucket *e;
+    while ((e = APR_BRIGADE_FIRST(bb)) != APR_BRIGADE_SENTINEL(bb)) {
 
         /* Optimization: If we are a HEAD request and bytes_sent is not zero
          * it means that we have passed the content-length filter once and
@@ -513,7 +519,7 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb)
             const char *data;
             apr_size_t len;
 
-            rv = apr_bucket_read(e, &data, &len, APR_BLOCK_READ);
+            rv = apr_bucket_read(e, &data, &len, APR_NONBLOCK_READ);
             if (rv != APR_SUCCESS) {
                 return rv;
             }

@@ -22,7 +22,8 @@ Windows MSVC binaries are provided in [releases](https://github.com/nono303/mod_
 
 ```apache
 # Load module
-## log at startup: '[AH30307: mod_zstd cl:11, wk:16 (v1.0.0, zstd 1.5.7)]'
+## startuplog, ex: [AH30307: mod_zstd cl:11, wk:16 (v1.0.0, zstd 1.5.7)]
+## /server-info, ex: Server Version: Apache/2.4.63 (Win64) OpenSSL/3.4.1 mod_fcgid/2.3.10.4 mod_zstd/1.0.0 
 LoadModule zstd_module modules/mod_zstd.so
 
 <IfModule zstd_module>

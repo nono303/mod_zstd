@@ -11,7 +11,7 @@ mod_zstd is a **Zstandard** compression module for Apache HTTPD Server.
 
 ## Releases
 
-Windows MSVC binaries are provided in releases, with **zstd 1.5.7** _(shared linking)_
+Windows MSVC binaries are provided in [releases](https://github.com/nono303/mod_zstd/releases), with **zstd dll** _(shared linking)_
 
 > Available for **x64** - vs16 _(14.29)_& **vs17** _(14.44)_ - **AVX / AVX2**  or **SSE2**
   - _Check your [cpu supported instructions](https://raw.githubusercontent.com/nono303/PHP-memcache-dll/master/avx.png) with [CPU-Z](https://www.cpuid.com/softwares/cpu-z.html)_  

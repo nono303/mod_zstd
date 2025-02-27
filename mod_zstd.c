@@ -514,6 +514,7 @@ static apr_status_t zstd_post_config(apr_pool_t *p, apr_pool_t *plog,
                  conf->workers,
                  MOD_ZSTD_VERSION,
                  ZSTD_versionString());
+    ap_add_version_component(p, "mod_zstd/" MOD_ZSTD_VERSION);
     return OK;
 }
 

@@ -31,31 +31,10 @@
 
 module AP_MODULE_DECLARE_DATA zstd_module;
 
-typedef enum {
-    ETAG_MODE_ADDSUFFIX = 0,
-    ETAG_MODE_NOCHANGE = 1,
-    ETAG_MODE_REMOVE = 2
-} etag_mode_e;
-
-typedef struct zstd_server_config_t {
-    int compression_level, workers;
-    etag_mode_e etag_mode;
-    const char *note_ratio_name;
-    const char *note_input_name;
-    const char *note_output_name;
-} zstd_server_config_t;
-
-typedef struct zstd_ctx_t {
-    ZSTD_CCtx *cctx;
-    apr_bucket_brigade *bb;
-    apr_off_t total_in;
-    apr_off_t total_out;
-} zstd_ctx_t;
-
 static void *create_server_config(apr_pool_t *p, server_rec *s) {
 
     zstd_server_config_t *conf = apr_pcalloc(p, sizeof(*conf));
-    conf->compression_level = 15;
+    conf->compression_level = ZSTD_DEFAULT_COMPRESSION_LEVEL;
     conf->etag_mode = ETAG_MODE_ADDSUFFIX;
 
     #ifdef _WIN32
@@ -68,11 +47,11 @@ static void *create_server_config(apr_pool_t *p, server_rec *s) {
     #endif
     #ifdef _SC_NPROCESSORS_ONLN
         conf->workers = sysconf(_SC_NPROCESSORS_ONLN);
-	#else
-		/* 
-	     * https://facebook.github.io/zstd/zstd_manual.html#Chapter5
-		 * Default value is `0`, aka "single-threaded mode" : no worker is spawned
-		 */
+    #else
+        /*
+         * https://facebook.github.io/zstd/zstd_manual.html#Chapter5
+         * Default value is `0`, aka "single-threaded mode" : no worker is spawned
+         */
         conf->workers = 0;
     #endif
 
@@ -122,10 +101,10 @@ static const char *set_compression_level(cmd_parms *cmd, void *dummy,
 
 static const char *set_etag_mode(cmd_parms *cmd, void *dummy,
                                  const char *arg) {
- 
+
     zstd_server_config_t *conf =
         ap_get_module_config(cmd->server->module_config, &zstd_module);
- 
+
     if (ap_cstr_casecmp(arg, "AddSuffix") == 0) {
         conf->etag_mode = ETAG_MODE_ADDSUFFIX;
     } else if (ap_cstr_casecmp(arg, "NoChange") == 0) {
@@ -183,12 +162,13 @@ static zstd_ctx_t *create_ctx(zstd_server_config_t* conf,
 }
 
 static apr_status_t process_chunk(zstd_ctx_t *ctx,
+                                  ZSTD_EndDirective mode,
                                   const void *data,
                                   apr_size_t len,
                                   ap_filter_t *f) {
- 
+
     size_t remaining;
-    
+
     ZSTD_inBuffer input = { data, len, 0 };
     size_t out_size = ZSTD_compressBound(len);
     char *out_buffer = apr_palloc(f->r->pool, out_size);
@@ -199,7 +179,7 @@ static apr_status_t process_chunk(zstd_ctx_t *ctx,
          * https://facebook.github.io/zstd/zstd_manual.html#Chapter8
          * ex. https://fossies.org/linux/cyrus-imapd/imap/httpd.c
          */
-        remaining = ZSTD_compressStream2(ctx->cctx, &output, &input, ZSTD_e_flush);
+        remaining = ZSTD_compressStream2(ctx->cctx, &output, &input, mode);
         if (ZSTD_isError(remaining)) {
             ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r, APLOGNO(30305)
                 "Error while compressing data: %s",
@@ -230,7 +210,7 @@ static apr_status_t flush(zstd_ctx_t *ctx,
                           ap_filter_t *f) {
 
     size_t remaining;
-    
+
     ZSTD_inBuffer input = { NULL, 0, 0 };
     size_t out_size = ZSTD_compressBound(ZSTD_CStreamInSize());
     char *out_buffer = apr_palloc(f->r->pool, out_size);
@@ -244,7 +224,7 @@ static apr_status_t flush(zstd_ctx_t *ctx,
                 ZSTD_getErrorName(remaining));
             return APR_EGENERAL;
         }
-   
+
         if (output.pos > 0) {
             apr_bucket *b = apr_bucket_heap_create(out_buffer, output.pos, NULL,
                 ctx->bb->bucket_alloc);
@@ -252,7 +232,7 @@ static apr_status_t flush(zstd_ctx_t *ctx,
             ctx->total_out += output.pos;
         }
     } while (remaining > 0);
- 
+
     return APR_SUCCESS;
 }
 
@@ -270,13 +250,13 @@ static const char *get_content_encoding(request_rec *r) {
     } else {
         encoding = apr_table_get(r->err_headers_out, "Content-Encoding");
     }
- 
+
     if (r->content_encoding) {
         encoding = encoding ? apr_pstrcat(r->pool, encoding, ",",
                                           r->content_encoding, NULL)
                             : r->content_encoding;
     }
- 
+
     return encoding;
 }
 
@@ -344,7 +324,7 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb) {
             ap_remove_output_filter(f);
             return ap_pass_brigade(f->next, bb);
         }
- 
+
         /* Do we have Accept-Encoding: zstd? */
         token = ap_get_token(r->pool, &accepts, 0);
         while (token && token[0] && ap_cstr_casecmp(token, "zstd") != 0) {
@@ -357,7 +337,7 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb) {
             }
             token = (*accepts) ? ap_get_token(r->pool, &accepts, 0) : NULL;
         }
- 
+
         /* Find the qvalue, if provided */
         if (*accepts) {
             while (*accepts == ';') {
@@ -387,7 +367,7 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb) {
         }
         apr_table_unset(r->headers_out, "Content-Length");
         apr_table_unset(r->headers_out, "Content-MD5");
- 
+
         /* https://bz.apache.org/bugzilla/show_bug.cgi?id=39727
          * https://bz.apache.org/bugzilla/show_bug.cgi?id=45023
          *
@@ -425,7 +405,7 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb) {
 
     apr_bucket *e;
     while ((e = APR_BRIGADE_FIRST(bb)) != APR_BRIGADE_SENTINEL(bb)) {
-  
+
         /* Optimization: If we are a HEAD request and bytes_sent is not zero
          * it means that we have passed the content-length filter once and
          * have more data to send.  This means that the content-length filter
@@ -437,7 +417,7 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb) {
             ap_remove_output_filter(f);
             return ap_pass_brigade(f->next, bb);
         }
-  
+
         if (APR_BUCKET_IS_EOS(e)) {
             rv = flush(ctx, ZSTD_e_end, f);
             if (rv != APR_SUCCESS) {
@@ -470,8 +450,9 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb) {
             apr_brigade_cleanup(ctx->bb);
             apr_pool_cleanup_run(r->pool, ctx, cleanup_ctx);
             return rv;
- 
+
         } else if (APR_BUCKET_IS_FLUSH(e)) {
+            /* TODO Check - seems useless as last chunk was already flushed */
             rv = flush(ctx, ZSTD_e_flush, f);
             if (rv != APR_SUCCESS) {
                 return rv;
@@ -489,16 +470,16 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb) {
         } else if (APR_BUCKET_IS_METADATA(e)) {
             APR_BUCKET_REMOVE(e);
             APR_BRIGADE_INSERT_TAIL(ctx->bb, e);
- 
+
         } else {
             const char *data;
             apr_size_t len;
-
+            // https://apr.apache.org/docs/apr/2.0/group___a_p_r___util___bucket___brigades.html#gae44ae938c6c60e148430fdb098dcf28f
             rv = apr_bucket_read(e, &data, &len, APR_NONBLOCK_READ);
             if (rv != APR_SUCCESS) {
                 return rv;
             }
-            rv = process_chunk(ctx, data, len, f);
+            rv = process_chunk(ctx, ZSTD_e_flush, data, len, f);
             if (rv != APR_SUCCESS) {
                 return rv;
             }
@@ -514,23 +495,23 @@ static apr_status_t zstd_post_config(apr_pool_t *p, apr_pool_t *plog,
     zstd_server_config_t *conf;
     conf = ap_get_module_config(s->module_config, &zstd_module);
     ap_log_error(APLOG_MARK, APLOG_INFO, 0, s, APLOGNO(30307)
-                 "mod_zstd cl:%d, wk:%d (v%s, zstd %s)", 
-                 conf->compression_level, 
-                 conf->workers, 
+                 "mod_zstd cl:%d, wk:%d (v%s, zstd %s)",
+                 conf->compression_level,
+                 conf->workers,
                  MOD_ZSTD_VERSION,
                  ZSTD_versionString());
     return OK;
 }
 
 static void register_hooks(apr_pool_t *p) {
-    
+
     ap_register_output_filter("ZSTD_COMPRESS", compress_filter, NULL,
                               AP_FTYPE_CONTENT_SET);
     ap_hook_post_config(zstd_post_config, NULL, NULL, APR_HOOK_LAST);
 }
 
 static const command_rec cmds[] = {
-    
+
     AP_INIT_TAKE12("ZstdFilterNote", set_filter_note,
                    NULL, RSRC_CONF,
                    "Set a note to report on compression ratio"),

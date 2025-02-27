@@ -21,6 +21,7 @@
 
 #include <zstd.h>
 #include "mod_zstd.h"
+#include "zstd_private.h"
 
 module AP_MODULE_DECLARE_DATA zstd_module;
 
@@ -31,7 +32,7 @@ typedef enum {
 } etag_mode_e;
 
 typedef struct zstd_server_config_t {
-    int compression_level;
+    int compression_level, workers;
     int window_size;
     etag_mode_e etag_mode;
     const char *note_ratio_name;
@@ -46,6 +47,8 @@ static void *create_server_config(apr_pool_t *p, server_rec *s)
     conf->compression_level = 7;
     conf->window_size = 128;
     conf->etag_mode = ETAG_MODE_ADDSUFFIX;
+	/* fixed */
+	conf->workers = 16;
 
     return conf;
 }
@@ -149,16 +152,41 @@ static apr_status_t cleanup_ctx(void *data)
     return APR_SUCCESS;
 }
 
-static zstd_ctx_t *create_ctx(int compression_level,
-    int window_size,
+static zstd_ctx_t *create_ctx(zstd_server_config_t* conf,
     apr_bucket_alloc_t *alloc,
-    apr_pool_t *pool)
+    apr_pool_t *pool,
+	request_rec* r)
 {
-    zstd_ctx_t *ctx = apr_pcalloc(pool, sizeof(*ctx));
+    zstd_ctx_t* ctx = apr_pcalloc(pool, sizeof(*ctx));
 
     ctx->cctx = ZSTD_createCCtx();
-    ZSTD_CCtx_setParameter(ctx->cctx, ZSTD_c_compressionLevel, compression_level);
-    ZSTD_CCtx_setParameter(ctx->cctx, ZSTD_c_windowLog, window_size);
+
+    size_t rvsp;
+	int zstdparam;
+
+	rvsp = ZSTD_CCtx_setParameter(ctx->cctx, ZSTD_c_compressionLevel, conf->compression_level);
+	if (ZSTD_isError(rvsp)) {
+		ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, APLOGNO(303)"[CREATE_CTX] ZSTD_c_compressionLevel(%d): %s",conf->compression_level,ZSTD_getErrorName(rvsp));
+	} else {
+		ZSTD_CCtx_getParameter(ctx->cctx, ZSTD_c_compressionLevel, &zstdparam); 
+		ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, APLOGNO(303)"[CREATE_CTX] ZSTD_c_compressionLevel(%d): %d",conf->compression_level,zstdparam);
+	}
+	
+	rvsp = ZSTD_CCtx_setParameter(ctx->cctx, ZSTD_c_windowLog, conf->window_size);
+	if (ZSTD_isError(rvsp)) {
+		ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, APLOGNO(303)"[CREATE_CTX] ZSTD_c_windowLog(%d): %s {min: %d max: %d def: %d}",conf->window_size, ZSTD_getErrorName(rvsp),ZSTD_WINDOWLOG_MIN, ZSTD_WINDOWLOG_MAX, ZSTD_WINDOWLOG_LIMIT_DEFAULT);
+	} else {
+		ZSTD_CCtx_getParameter(ctx->cctx, ZSTD_c_windowLog, &zstdparam); 
+		ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, APLOGNO(303)"[CREATE_CTX] ZSTD_c_windowLog(%d): %d",conf->window_size,zstdparam);
+	}
+	
+	rvsp = ZSTD_CCtx_setParameter(ctx->cctx, ZSTD_c_nbWorkers, conf->workers);
+	if (ZSTD_isError(rvsp)) {
+		ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, APLOGNO(303)"[CREATE_CTX] ZSTD_c_nbWorkers(%d): %s",conf->workers,ZSTD_getErrorName(rvsp));
+	} else {
+		ZSTD_CCtx_getParameter(ctx->cctx, ZSTD_c_nbWorkers, &zstdparam); 
+		ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, APLOGNO(303)"[CREATE_CTX] ZSTD_c_nbWorkers(%d): %d",conf->workers,zstdparam);
+	}
     apr_pool_cleanup_register(pool, ctx, cleanup_ctx, apr_pool_cleanup_null);
 
     ctx->bb = apr_brigade_create(pool, alloc);
@@ -408,8 +436,7 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb)
             return ap_pass_brigade(f->next, bb);
         }
 
-        ctx = create_ctx(conf->compression_level, conf->window_size,
-                         f->c->bucket_alloc, r->pool);
+        ctx = create_ctx(conf,f->c->bucket_alloc, r->pool, f->r);
         f->ctx = ctx;
     }
 

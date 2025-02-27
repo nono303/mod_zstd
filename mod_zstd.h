@@ -1,0 +1,1 @@
+#define MOD_ZSTD_VERSION "0.1.0"

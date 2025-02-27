@@ -19,9 +19,10 @@
 #include "http_log.h"
 #include "apr_strings.h"
 
-#include <brotli/encode.h>
+#include <zstd.h>
+#include "mod_zstd.h"
 
-module AP_MODULE_DECLARE_DATA brotli_module;
+module AP_MODULE_DECLARE_DATA zstd_module;
 
 typedef enum {
     ETAG_MODE_ADDSUFFIX = 0,
@@ -29,35 +30,21 @@ typedef enum {
     ETAG_MODE_REMOVE = 2
 } etag_mode_e;
 
-typedef struct brotli_server_config_t {
-    int quality;
-    int lgwin;
-    int lgblock;
+typedef struct zstd_server_config_t {
+    int compression_level;
+    int window_size;
     etag_mode_e etag_mode;
     const char *note_ratio_name;
     const char *note_input_name;
     const char *note_output_name;
-} brotli_server_config_t;
+} zstd_server_config_t;
 
 static void *create_server_config(apr_pool_t *p, server_rec *s)
 {
-    brotli_server_config_t *conf = apr_pcalloc(p, sizeof(*conf));
+    zstd_server_config_t *conf = apr_pcalloc(p, sizeof(*conf));
 
-    /* These default values allow mod_brotli to behave similarly to
-     * mod_deflate in terms of compression speed and memory usage.
-     *
-     * The idea is that since Brotli (generally) gives better compression
-     * ratio than Deflate, simply enabling mod_brotli on the server
-     * will reduce the amount of transferred data while keeping everything
-     * else unchanged.  See https://quixdb.github.io/squash-benchmark/
-     */
-    conf->quality = 5;
-    conf->lgwin = 18;
-    /* Zero is a special value for BROTLI_PARAM_LGBLOCK that allows
-     * Brotli to automatically select the optimal input block size based
-     * on other encoder parameters.  See enc/quality.h: ComputeLgBlock().
-     */
-    conf->lgblock = 0;
+    conf->compression_level = 7;
+    conf->window_size = 128;
     conf->etag_mode = ETAG_MODE_ADDSUFFIX;
 
     return conf;
@@ -66,8 +53,8 @@ static void *create_server_config(apr_pool_t *p, server_rec *s)
 static const char *set_filter_note(cmd_parms *cmd, void *dummy,
                                    const char *arg1, const char *arg2)
 {
-    brotli_server_config_t *conf =
-        ap_get_module_config(cmd->server->module_config, &brotli_module);
+    zstd_server_config_t *conf =
+        ap_get_module_config(cmd->server->module_config, &zstd_module);
 
     if (!arg2) {
         conf->note_ratio_name = arg1;
@@ -84,63 +71,51 @@ static const char *set_filter_note(cmd_parms *cmd, void *dummy,
         conf->note_output_name = arg2;
     }
     else {
-        return apr_psprintf(cmd->pool, "Unknown BrotliFilterNote type '%s'",
+        return apr_psprintf(cmd->pool, "Unknown ZstdFilterNote type '%s'",
                             arg1);
     }
 
     return NULL;
 }
 
-static const char *set_compression_quality(cmd_parms *cmd, void *dummy,
+static const char *set_compression_level(cmd_parms *cmd, void *dummy,
                                            const char *arg)
 {
-    brotli_server_config_t *conf =
-        ap_get_module_config(cmd->server->module_config, &brotli_module);
+    zstd_server_config_t *conf =
+        ap_get_module_config(cmd->server->module_config, &zstd_module);
     int val = atoi(arg);
 
-    if (val < 0 || val > 11) {
-        return "BrotliCompressionQuality must be between 0 and 11";
+    if (val < ZSTD_minCLevel() || val > ZSTD_maxCLevel()) {
+        return apr_psprintf(cmd->pool, "ZstdCompressionLevel must be between %d and %d",
+            ZSTD_minCLevel(), ZSTD_maxCLevel());
     }
 
-    conf->quality = val;
+    conf->compression_level = val;
     return NULL;
 }
 
-static const char *set_compression_lgwin(cmd_parms *cmd, void *dummy,
+static const char *set_window_size(cmd_parms *cmd, void *dummy,
                                          const char *arg)
 {
-    brotli_server_config_t *conf =
-        ap_get_module_config(cmd->server->module_config, &brotli_module);
+    zstd_server_config_t *conf =
+        ap_get_module_config(cmd->server->module_config, &zstd_module);
     int val = atoi(arg);
 
-    if (val < 10 || val > 24) {
-        return "BrotliCompressionWindow must be between 10 and 24";
+    if (val < 0 || val > 101) {
+        return apr_psprintf(cmd->pool, "ZstdWindowSize = (ZSTD_c_windowLog) must be between %d and %d",
+            0, 101);
     }
 
-    conf->lgwin = val;
-    return NULL;
-}
 
-static const char *set_compression_lgblock(cmd_parms *cmd, void *dummy,
-                                           const char *arg)
-{
-    brotli_server_config_t *conf =
-        ap_get_module_config(cmd->server->module_config, &brotli_module);
-    int val = atoi(arg);
-
-    if (val < 16 || val > 24) {
-        return "BrotliCompressionMaxInputBlock must be between 16 and 24";
-    }
-
-    conf->lgblock = val;
+    conf->window_size = val;
     return NULL;
 }
 
 static const char *set_etag_mode(cmd_parms *cmd, void *dummy,
                                  const char *arg)
 {
-    brotli_server_config_t *conf =
-        ap_get_module_config(cmd->server->module_config, &brotli_module);
+    zstd_server_config_t *conf =
+        ap_get_module_config(cmd->server->module_config, &zstd_module);
 
     if (ap_cstr_casecmp(arg, "AddSuffix") == 0) {
         conf->etag_mode = ETAG_MODE_ADDSUFFIX;
@@ -152,52 +127,38 @@ static const char *set_etag_mode(cmd_parms *cmd, void *dummy,
         conf->etag_mode = ETAG_MODE_REMOVE;
     }
     else {
-        return "BrotliAlterETag accepts only 'AddSuffix', 'NoChange' and 'Remove'";
+        return "ZstdAlterETag accepts only 'AddSuffix', 'NoChange' and 'Remove'";
     }
 
     return NULL;
 }
 
-typedef struct brotli_ctx_t {
-    BrotliEncoderState *state;
+typedef struct zstd_ctx_t {
+    ZSTD_CCtx *cctx;
     apr_bucket_brigade *bb;
     apr_off_t total_in;
     apr_off_t total_out;
-} brotli_ctx_t;
-
-static void *alloc_func(void *opaque, size_t size)
-{
-    return apr_bucket_alloc(size, opaque);
-}
-
-static void free_func(void *opaque, void *block)
-{
-    if (block) {
-        apr_bucket_free(block);
-    }
-}
+} zstd_ctx_t;
 
 static apr_status_t cleanup_ctx(void *data)
 {
-    brotli_ctx_t *ctx = data;
+    zstd_ctx_t *ctx = data;
 
-    BrotliEncoderDestroyInstance(ctx->state);
-    ctx->state = NULL;
+    ZSTD_freeCCtx(ctx->cctx);
+    ctx->cctx = NULL;
     return APR_SUCCESS;
 }
 
-static brotli_ctx_t *create_ctx(int quality,
-                                int lgwin,
-                                int lgblock,
-                                apr_bucket_alloc_t *alloc,
-                                apr_pool_t *pool)
+static zstd_ctx_t *create_ctx(int compression_level,
+    int window_size,
+    apr_bucket_alloc_t *alloc,
+    apr_pool_t *pool)
 {
-    brotli_ctx_t *ctx = apr_pcalloc(pool, sizeof(*ctx));
+    zstd_ctx_t *ctx = apr_pcalloc(pool, sizeof(*ctx));
 
-    ctx->state = BrotliEncoderCreateInstance(alloc_func, free_func, alloc);
-    BrotliEncoderSetParameter(ctx->state, BROTLI_PARAM_QUALITY, quality);
-    BrotliEncoderSetParameter(ctx->state, BROTLI_PARAM_LGWIN, lgwin);
-    BrotliEncoderSetParameter(ctx->state, BROTLI_PARAM_LGBLOCK, lgblock);
+    ctx->cctx = ZSTD_createCCtx();
+    ZSTD_CCtx_setParameter(ctx->cctx, ZSTD_c_compressionLevel, compression_level);
+    ZSTD_CCtx_setParameter(ctx->cctx, ZSTD_c_windowLog, window_size);
     apr_pool_cleanup_register(pool, ctx, cleanup_ctx, apr_pool_cleanup_null);
 
     ctx->bb = apr_brigade_create(pool, alloc);
@@ -207,52 +168,34 @@ static brotli_ctx_t *create_ctx(int quality,
     return ctx;
 }
 
-static apr_status_t process_chunk(brotli_ctx_t *ctx,
-                                  const void *data,
-                                  apr_size_t len,
-                                  ap_filter_t *f)
+static apr_status_t process_chunk(zstd_ctx_t *ctx,
+    const void *data,
+    apr_size_t len,
+    ap_filter_t *f)
 {
-    const apr_byte_t *next_in = data;
-    apr_size_t avail_in = len;
+    ZSTD_inBuffer input = { data, len, 0 };
+    size_t out_size = ZSTD_compressBound(len);
+    char *out_buffer = apr_palloc(f->r->pool, out_size);
+    ZSTD_outBuffer output = { out_buffer, out_size, 0 };
 
-    while (avail_in > 0) {
-        apr_byte_t *next_out = NULL;
-        apr_size_t avail_out = 0;
+    size_t remaining = ZSTD_compressStream2(ctx->cctx, &output, &input, ZSTD_e_continue);
+    if (ZSTD_isError(remaining)) {
+        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r, APLOGNO(03459)
+            "Error while compressing data: %s",
+            ZSTD_getErrorName(remaining));
+        return APR_EGENERAL;
+    }
 
-        if (!BrotliEncoderCompressStream(ctx->state,
-                                         BROTLI_OPERATION_PROCESS,
-                                         &avail_in, &next_in,
-                                         &avail_out, &next_out, NULL)) {
-            ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r, APLOGNO(03459)
-                          "Error while compressing data");
-            return APR_EGENERAL;
-        }
+    if (output.pos > 0) {
+        apr_bucket *b = apr_bucket_heap_create(out_buffer, output.pos, NULL,
+            ctx->bb->bucket_alloc);
+        ctx->total_out += output.pos;
+        APR_BRIGADE_INSERT_TAIL(ctx->bb, b);
 
-        if (BrotliEncoderHasMoreOutput(ctx->state)) {
-            apr_size_t output_len = 0;
-            const apr_byte_t *output;
-            apr_status_t rv;
-            apr_bucket *b;
-
-            /* Drain the accumulated output.  Avoid copying the data by
-             * wrapping a pointer to the internal output buffer and passing
-             * it down to the next filter.  The pointer is only valid until
-             * the next call to BrotliEncoderCompressStream(), but we're okay
-             * with that, since the brigade is cleaned up right after the
-             * ap_pass_brigade() call.
-             */
-            output = BrotliEncoderTakeOutput(ctx->state, &output_len);
-            ctx->total_out += output_len;
-
-            b = apr_bucket_transient_create((const char *)output, output_len,
-                                            ctx->bb->bucket_alloc);
-            APR_BRIGADE_INSERT_TAIL(ctx->bb, b);
-
-            rv = ap_pass_brigade(f->next, ctx->bb);
-            apr_brigade_cleanup(ctx->bb);
-            if (rv != APR_SUCCESS) {
-                return rv;
-            }
+        apr_status_t rv = ap_pass_brigade(f->next, ctx->bb);
+        apr_brigade_cleanup(ctx->bb);
+        if (rv != APR_SUCCESS) {
+            return rv;
         }
     }
 
@@ -260,43 +203,32 @@ static apr_status_t process_chunk(brotli_ctx_t *ctx,
     return APR_SUCCESS;
 }
 
-static apr_status_t flush(brotli_ctx_t *ctx,
-                          BrotliEncoderOperation op,
-                          ap_filter_t *f)
+static apr_status_t flush(zstd_ctx_t *ctx,
+    ZSTD_EndDirective mode,
+    ap_filter_t *f)
 {
-    while (1) {
-        const apr_byte_t *next_in = NULL;
-        apr_size_t avail_in = 0;
-        apr_byte_t *next_out = NULL;
-        apr_size_t avail_out = 0;
-        apr_size_t output_len;
-        const apr_byte_t *output;
-        apr_bucket *b;
+    ZSTD_inBuffer input = { NULL, 0, 0 };
+    size_t out_size = ZSTD_compressBound(ZSTD_CStreamInSize());
+    char *out_buffer = apr_palloc(f->r->pool, out_size);
+    ZSTD_outBuffer output = { out_buffer, out_size, 0 };
 
-        if (!BrotliEncoderCompressStream(ctx->state, op,
-                                         &avail_in, &next_in,
-                                         &avail_out, &next_out, NULL)) {
+    size_t remaining;
+    do {
+        remaining = ZSTD_compressStream2(ctx->cctx, &output, &input, mode);
+        if (ZSTD_isError(remaining)) {
             ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r, APLOGNO(03460)
-                          "Error while compressing data");
+                "Error while flushing data: %s",
+                ZSTD_getErrorName(remaining));
             return APR_EGENERAL;
         }
 
-        if (!BrotliEncoderHasMoreOutput(ctx->state)) {
-            break;
+        if (output.pos > 0) {
+            apr_bucket *b = apr_bucket_heap_create(out_buffer, output.pos, NULL,
+                ctx->bb->bucket_alloc);
+            APR_BRIGADE_INSERT_TAIL(ctx->bb, b);
+            ctx->total_out += output.pos;
         }
-
-        /* A flush can require several calls to BrotliEncoderCompressStream(),
-         * so place the data on the heap (otherwise, the pointer will become
-         * invalid after the next call to BrotliEncoderCompressStream()).
-         */
-        output_len = 0;
-        output = BrotliEncoderTakeOutput(ctx->state, &output_len);
-        ctx->total_out += output_len;
-
-        b = apr_bucket_heap_create((const char *)output, output_len, NULL,
-                                   ctx->bb->bucket_alloc);
-        APR_BRIGADE_INSERT_TAIL(ctx->bb, b);
-    }
+    } while (remaining > 0);
 
     return APR_SUCCESS;
 }
@@ -330,15 +262,15 @@ static const char *get_content_encoding(request_rec *r)
 static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 {
     request_rec *r = f->r;
-    brotli_ctx_t *ctx = f->ctx;
+    zstd_ctx_t *ctx = f->ctx;
     apr_status_t rv;
-    brotli_server_config_t *conf;
+    zstd_server_config_t *conf;
 
     if (APR_BRIGADE_EMPTY(bb)) {
         return APR_SUCCESS;
     }
 
-    conf = ap_get_module_config(r->server->module_config, &brotli_module);
+    conf = ap_get_module_config(r->server->module_config, &zstd_module);
 
     if (!ctx) {
         const char *encoding;
@@ -348,14 +280,14 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 
         /* Only work on main request, not subrequests, that are not
          * a 204 response with no content, and are not tagged with the
-         * no-brotli env variable, and are not a partial response to
+         * no-zstd env variable, and are not a partial response to
          * a Range request.
          *
          * Note that responding to 304 is handled separately to set
          * the required headers (such as ETag) per RFC7232, 4.1.
          */
         if (r->main || r->status == HTTP_NO_CONTENT
-            || apr_table_get(r->subprocess_env, "no-brotli")
+            || apr_table_get(r->subprocess_env, "no-zstd")
             || apr_table_get(r->headers_out, "Content-Range")) {
             ap_remove_output_filter(f);
             return ap_pass_brigade(f->next, bb);
@@ -398,9 +330,9 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb)
             return ap_pass_brigade(f->next, bb);
         }
 
-        /* Do we have Accept-Encoding: br? */
+        /* Do we have Accept-Encoding: zstd? */
         token = ap_get_token(r->pool, &accepts, 0);
-        while (token && token[0] && ap_cstr_casecmp(token, "br") != 0) {
+        while (token && token[0] && ap_cstr_casecmp(token, "zstd") != 0) {
             while (*accepts == ';') {
                 ++accepts;
                 ap_get_token(r->pool, &accepts, 1);
@@ -431,9 +363,9 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 
         /* If the entire Content-Encoding is "identity", we can replace it. */
         if (!encoding || ap_cstr_casecmp(encoding, "identity") == 0) {
-            apr_table_setn(r->headers_out, "Content-Encoding", "br");
+            apr_table_setn(r->headers_out, "Content-Encoding", "zstd");
         } else {
-            apr_table_mergen(r->headers_out, "Content-Encoding", "br");
+            apr_table_mergen(r->headers_out, "Content-Encoding", "zstd");
         }
 
         if (r->content_encoding) {
@@ -464,7 +396,7 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 
                 if (len > 2 && etag[len - 1] == '"') {
                     etag = apr_pstrmemdup(r->pool, etag, len - 1);
-                    etag = apr_pstrcat(r->pool, etag, "-br\"", NULL);
+                    etag = apr_pstrcat(r->pool, etag, "-zstd\"", NULL);
                     apr_table_setn(r->headers_out, "ETag", etag);
                 }
             }
@@ -476,7 +408,7 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb)
             return ap_pass_brigade(f->next, bb);
         }
 
-        ctx = create_ctx(conf->quality, conf->lgwin, conf->lgblock,
+        ctx = create_ctx(conf->compression_level, conf->window_size,
                          f->c->bucket_alloc, r->pool);
         f->ctx = ctx;
     }
@@ -497,7 +429,7 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb)
         }
 
         if (APR_BUCKET_IS_EOS(e)) {
-            rv = flush(ctx, BROTLI_OPERATION_FINISH, f);
+            rv = flush(ctx, ZSTD_e_end, f);
             if (rv != APR_SUCCESS) {
                 return rv;
             }
@@ -532,7 +464,7 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb)
             return rv;
         }
         else if (APR_BUCKET_IS_FLUSH(e)) {
-            rv = flush(ctx, BROTLI_OPERATION_FLUSH, f);
+            rv = flush(ctx, ZSTD_e_flush, f);
             if (rv != APR_SUCCESS) {
                 return rv;
             }
@@ -570,34 +502,29 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 
 static void register_hooks(apr_pool_t *p)
 {
-    ap_register_output_filter("BROTLI_COMPRESS", compress_filter, NULL,
+    ap_register_output_filter("ZSTD_COMPRESS", compress_filter, NULL,
                               AP_FTYPE_CONTENT_SET);
 }
 
 static const command_rec cmds[] = {
-    AP_INIT_TAKE12("BrotliFilterNote", set_filter_note,
+    AP_INIT_TAKE12("ZstdFilterNote", set_filter_note,
                    NULL, RSRC_CONF,
                    "Set a note to report on compression ratio"),
-    AP_INIT_TAKE1("BrotliCompressionQuality", set_compression_quality,
+    AP_INIT_TAKE1("ZstdCompressionLevel", set_compression_level,
                   NULL, RSRC_CONF,
-                  "Compression quality between 0 and 11 (higher quality means "
-                  "slower compression)"),
-    AP_INIT_TAKE1("BrotliCompressionWindow", set_compression_lgwin,
+                  "Compression level between min and max (higher level means "
+                  "better compression but slower)"),
+    AP_INIT_TAKE1("ZstdWindowSize", set_window_size,
                   NULL, RSRC_CONF,
-                  "Sliding window size between 10 and 24 (larger windows can "
-                  "improve compression, but require more memory)"),
-    AP_INIT_TAKE1("BrotliCompressionMaxInputBlock", set_compression_lgblock,
+                  "Maximum allowed back-reference distance, expressed as power of 2."),
+    AP_INIT_TAKE1("ZstdAlterETag", set_etag_mode,
                   NULL, RSRC_CONF,
-                  "Maximum input block size between 16 and 24 (larger block "
-                  "sizes require more memory)"),
-    AP_INIT_TAKE1("BrotliAlterETag", set_etag_mode,
-                  NULL, RSRC_CONF,
-                  "Set how mod_brotli should modify ETag response headers: "
+                  "Set how mod_zstd should modify ETag response headers: "
                   "'AddSuffix' (default), 'NoChange', 'Remove'"),
     {NULL}
 };
 
-AP_DECLARE_MODULE(brotli) = {
+AP_DECLARE_MODULE(zstd) = {
     STANDARD20_MODULE_STUFF,
     NULL,                      /* create per-directory config structure */
     NULL,                      /* merge per-directory config structures */

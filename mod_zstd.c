@@ -145,10 +145,6 @@ static zstd_ctx_t *create_ctx(zstd_server_config_t* conf,
 		              ZSTD_getErrorName(rvsp));
     } else {
         ZSTD_CCtx_getParameter(ctx->cctx, ZSTD_c_compressionLevel, &zstdparam);
-        ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r,
-		              "[CREATE_CTX] ZSTD_c_compressionLevel(%d): %d",
-		              conf->compression_level,
-		              zstdparam);
     }
 
     rvsp = ZSTD_CCtx_setParameter(ctx->cctx, ZSTD_c_nbWorkers, conf->workers);
@@ -159,10 +155,6 @@ static zstd_ctx_t *create_ctx(zstd_server_config_t* conf,
 		              ZSTD_getErrorName(rvsp));
     } else {
         ZSTD_CCtx_getParameter(ctx->cctx, ZSTD_c_nbWorkers, &zstdparam);
-        ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r,
-		              "[CREATE_CTX] ZSTD_c_nbWorkers(%d): %d",
-		              conf->workers,
-		              zstdparam);
     }
 
     apr_pool_cleanup_register(pool, ctx, cleanup_ctx, apr_pool_cleanup_null);
@@ -240,7 +232,7 @@ static apr_status_t flush(zstd_ctx_t *ctx,
 
         if (output.pos > 0) {
             apr_bucket *b = apr_bucket_heap_create(out_buffer, output.pos,
-		              		              		   NULL, 
+		              		              		   NULL,
 						              		       ctx->bb->bucket_alloc);
             APR_BRIGADE_INSERT_TAIL(ctx->bb, b);
             ctx->total_out += output.pos;
@@ -464,6 +456,13 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb) {
             rv = ap_pass_brigade(f->next, ctx->bb);
             apr_brigade_cleanup(ctx->bb);
             apr_pool_cleanup_run(r->pool, ctx, cleanup_ctx);
+			ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r,
+		                  "%s [c:%d w:%d] %s:%d %s:%d %s:%d",
+			              r->the_request,
+			              conf->compression_level, conf->workers,
+			              conf->note_input_name, ctx->total_in,
+			              conf->note_output_name, ctx->total_out,
+			              conf->note_ratio_name, (int) (ctx->total_out * 100 / ctx->total_in));
             return rv;
 
         } else if (APR_BUCKET_IS_FLUSH(e)) {

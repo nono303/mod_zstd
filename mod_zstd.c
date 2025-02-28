@@ -285,6 +285,8 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb) {
         return APR_SUCCESS;
     }
 
+	conf = ap_get_module_config(r->server->module_config, &zstd_module);
+
     if (!ctx) {
         const char *encoding;
         const char *token;
@@ -391,7 +393,6 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb) {
          * DeflateAlterETag with BrotliAlterETag to keep the transition from
          * mod_deflate seamless.
          */
-        conf = ap_get_module_config(r->server->module_config, &zstd_module);
         if (conf->etag_mode == ETAG_MODE_REMOVE) {
             apr_table_unset(r->headers_out, "ETag");
         } else if (conf->etag_mode == ETAG_MODE_ADDSUFFIX) {

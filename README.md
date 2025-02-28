@@ -13,8 +13,10 @@ mod_zstd is a **Zstandard** compression module for Apache HTTPD Server.
 
 Windows MSVC binaries are provided in [releases](https://github.com/nono303/mod_zstd/releases), with **zstd dll** _(shared linking)_
 
-> Available for **x64** - vs16 _(14.29)_& **vs17** _(14.44)_ - **AVX / AVX2**  or **SSE2**
+> Available for **x64** - vs16 _(14.29)_& **vs17** _(14.44)_ - **AVX / AVX2**  or **SSE2** _(see [bininfo.csv](./bininfo.csv))_
   - _Check your [cpu supported instructions](https://raw.githubusercontent.com/nono303/PHP-memcache-dll/master/avx.png) with [CPU-Z](https://www.cpuid.com/softwares/cpu-z.html)_  
+
+## [Changelog](./changelog.md)
 
 ## Configuration
 
@@ -30,7 +32,7 @@ LoadModule zstd_module modules/mod_zstd.so
 
   # Compression
   ## zstdCompressionLevel: 0-22 (default: 15)
-  ## > 19 may fail on Browser
+  ## ⚠️ > 19 fail on Browser (Chrome, Firefox)
   ZstdCompressionLevel 10
 
   # Specifies how to change the ETag header when the response is compressed
@@ -64,3 +66,24 @@ LoadModule zstd_module modules/mod_zstd.so
   CustomLog logs/access_log zstd
 </IfModule>
 ```
+
+## Benchmark
+
+|                          | size     | time _(sec)_ | level |
+| ------------------------ | -------- | ------------ | ----- |
+| **plain**                |          |              |       |
+|                          | 7.48 MiB | 0.326161     |       |
+| **zstd** _(workers: 16)_ |          |              |       |
+|                          | 1.28 MiB | 1.843991     | 22    |
+|                          | 1.47 MiB | 1.077741     | 19    |
+|                          | 1.56 MiB | 0.818978     | 16    |
+|                          | 1.85 MiB | 0.576764     | 15    |
+|                          | 1.85 MiB | 0.651635     | 11    |
+|                          | 2.13 MiB | 0.351167     | 5     |
+|                          | 2.11 MiB | 0.307403     | 0     |
+| **br** _(window: 24)_    |          |              |       |
+|                          | 1.08 MiB | 7.500807     | 11    |
+|                          | 1.70 MiB | 1.111671     | 9     |
+|                          | 1.74 MiB | 0.635557     | 7     |
+|                          | 1.81 MiB | 0.433002     | 5     |
+|                          | 2.58 MiB | 0.291109     | 0     |

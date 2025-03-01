@@ -137,12 +137,12 @@ static zstd_ctx_t *create_ctx(zstd_server_config_t* conf,
     ctx->cctx = ZSTD_createCCtx();
 
     rvsp = ZSTD_CCtx_setParameter(ctx->cctx, ZSTD_c_compressionLevel,
-		                          conf->compression_level);
+                                  conf->compression_level);
     if (ZSTD_isError(rvsp)) {
         ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, APLOGNO(30301)
-		              "[CREATE_CTX] ZSTD_c_compressionLevel(%d): %s",
-		              conf->compression_level,
-		              ZSTD_getErrorName(rvsp));
+                      "[CREATE_CTX] ZSTD_c_compressionLevel(%d): %s",
+                      conf->compression_level,
+                      ZSTD_getErrorName(rvsp));
     } else {
         ZSTD_CCtx_getParameter(ctx->cctx, ZSTD_c_compressionLevel, &zstdparam);
     }
@@ -150,9 +150,9 @@ static zstd_ctx_t *create_ctx(zstd_server_config_t* conf,
     rvsp = ZSTD_CCtx_setParameter(ctx->cctx, ZSTD_c_nbWorkers, conf->workers);
     if (ZSTD_isError(rvsp)) {
         ap_log_rerror(APLOG_MARK, APLOG_WARNING, 0, r, APLOGNO(30303)
-		              "[CREATE_CTX] ZSTD_c_nbWorkers(%d): %s",
-		              conf->workers,
-		              ZSTD_getErrorName(rvsp));
+                      "[CREATE_CTX] ZSTD_c_nbWorkers(%d): %s",
+                      conf->workers,
+                      ZSTD_getErrorName(rvsp));
     } else {
         ZSTD_CCtx_getParameter(ctx->cctx, ZSTD_c_nbWorkers, &zstdparam);
     }
@@ -166,7 +166,7 @@ static zstd_ctx_t *create_ctx(zstd_server_config_t* conf,
     return ctx;
 }
 
-static apr_status_t process_chunk(zstd_ctx_t *ctx,
+static apr_status_t process_bucket(zstd_ctx_t *ctx,
                                   ZSTD_EndDirective mode,
                                   const void *data,
                                   apr_size_t len,
@@ -179,7 +179,7 @@ static apr_status_t process_chunk(zstd_ctx_t *ctx,
     char *out_buffer = apr_palloc(f->r->pool, out_size);
     ZSTD_outBuffer output = { out_buffer, out_size, 0 };
 
-    do{
+    do {
         /*
          * https://facebook.github.io/zstd/zstd_manual.html#Chapter8
          * ex. https://fossies.org/linux/cyrus-imapd/imap/httpd.c
@@ -187,57 +187,20 @@ static apr_status_t process_chunk(zstd_ctx_t *ctx,
         remaining = ZSTD_compressStream2(ctx->cctx, &output, &input, mode);
         if (ZSTD_isError(remaining)) {
             ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r, APLOGNO(30305)
-                "Error while compressing data: %s",
+                "Error while processing bucket: %s",
                 ZSTD_getErrorName(remaining));
             return APR_EGENERAL;
         }
     } while (remaining || (input.pos != input.size));
 
     if (output.pos > 0) {
-        apr_bucket *b = apr_bucket_heap_create(out_buffer, output.pos, NULL,
-            ctx->bb->bucket_alloc);
+        apr_bucket *b = apr_bucket_heap_create(out_buffer, output.pos,
+                                               NULL, ctx->bb->bucket_alloc);
         ctx->total_out += output.pos;
         APR_BRIGADE_INSERT_TAIL(ctx->bb, b);
-        apr_status_t rv = ap_pass_brigade(f->next, ctx->bb);
-        apr_brigade_cleanup(ctx->bb);
-        if (rv != APR_SUCCESS) {
-            return rv;
-        }
     }
 
     ctx->total_in += len;
-
-    return APR_SUCCESS;
-}
-
-static apr_status_t flush(zstd_ctx_t *ctx,
-                          ZSTD_EndDirective mode,
-                          ap_filter_t *f) {
-
-    size_t remaining;
-
-    ZSTD_inBuffer input = { NULL, 0, 0 };
-    size_t out_size = ZSTD_compressBound(ZSTD_CStreamInSize());
-    char *out_buffer = apr_palloc(f->r->pool, out_size);
-    ZSTD_outBuffer output = { out_buffer, out_size, 0 };
-
-    do {
-        remaining = ZSTD_compressStream2(ctx->cctx, &output, &input, mode);
-        if (ZSTD_isError(remaining)) {
-            ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r, APLOGNO(30306)
-                "Error while flushing data: %s",
-                ZSTD_getErrorName(remaining));
-            return APR_EGENERAL;
-        }
-
-        if (output.pos > 0) {
-            apr_bucket *b = apr_bucket_heap_create(out_buffer, output.pos,
-		              		              		   NULL,
-						              		       ctx->bb->bucket_alloc);
-            APR_BRIGADE_INSERT_TAIL(ctx->bb, b);
-            ctx->total_out += output.pos;
-        }
-    } while (remaining > 0);
 
     return APR_SUCCESS;
 }
@@ -277,7 +240,7 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb) {
         return APR_SUCCESS;
     }
 
-	conf = ap_get_module_config(r->server->module_config, &zstd_module);
+    conf = ap_get_module_config(r->server->module_config, &zstd_module);
 
     if (!ctx) {
         const char *encoding;
@@ -426,7 +389,7 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb) {
         }
 
         if (APR_BUCKET_IS_EOS(e)) {
-            rv = flush(ctx, ZSTD_e_end, f);
+            rv = process_bucket(ctx, ZSTD_e_end, NULL, 0, f);
             if (rv != APR_SUCCESS) {
                 return rv;
             }
@@ -456,18 +419,18 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb) {
             rv = ap_pass_brigade(f->next, ctx->bb);
             apr_brigade_cleanup(ctx->bb);
             apr_pool_cleanup_run(r->pool, ctx, cleanup_ctx);
-			ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r,
-		                  "%s [c:%d w:%d] %s:%d %s:%d %s:%d",
-			              r->the_request,
-			              conf->compression_level, conf->workers,
-			              conf->note_input_name, ctx->total_in,
-			              conf->note_output_name, ctx->total_out,
-			              conf->note_ratio_name, (int) (ctx->total_out * 100 / ctx->total_in));
+            ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r,
+                          "%s [c:%d w:%d] %s:%d %s:%d %s:%d",
+                          r->the_request,
+                          conf->compression_level, conf->workers,
+                          conf->note_input_name, ctx->total_in,
+                          conf->note_output_name, ctx->total_out,
+                          conf->note_ratio_name, (int) (ctx->total_out * 100 / ctx->total_in));
             return rv;
 
         } else if (APR_BUCKET_IS_FLUSH(e)) {
             /* TODO Check - seems useless as last chunk was already flushed */
-            rv = flush(ctx, ZSTD_e_flush, f);
+            rv = process_bucket(ctx, ZSTD_e_flush, NULL, 0, f);
             if (rv != APR_SUCCESS) {
                 return rv;
             }
@@ -488,15 +451,24 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb) {
         } else {
             const char *data;
             apr_size_t len;
+
             // https://apr.apache.org/docs/apr/2.0/group___a_p_r___util___bucket___brigades.html#gae44ae938c6c60e148430fdb098dcf28f
             rv = apr_bucket_read(e, &data, &len, APR_NONBLOCK_READ);
             if (rv != APR_SUCCESS) {
                 return rv;
             }
-            rv = process_chunk(ctx, ZSTD_e_flush, data, len, f);
+
+            rv = process_bucket(ctx, ZSTD_e_flush, data, len, f);
             if (rv != APR_SUCCESS) {
                 return rv;
             }
+
+            rv = ap_pass_brigade(f->next, ctx->bb);
+            apr_brigade_cleanup(ctx->bb);
+            if (rv != APR_SUCCESS) {
+                return rv;
+            }
+
             apr_bucket_delete(e);
         }
     }

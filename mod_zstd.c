@@ -131,7 +131,6 @@ static zstd_ctx_t *create_ctx(zstd_server_config_t* conf,
                               request_rec* r) {
 
     size_t rvsp;
-    int zstdparam;
 
     zstd_ctx_t *ctx = apr_pcalloc(pool, sizeof(*ctx));
     ctx->cctx = ZSTD_createCCtx();
@@ -143,8 +142,6 @@ static zstd_ctx_t *create_ctx(zstd_server_config_t* conf,
                       "[CREATE_CTX] ZSTD_c_compressionLevel(%d): %s",
                       conf->compression_level,
                       ZSTD_getErrorName(rvsp));
-    } else {
-        ZSTD_CCtx_getParameter(ctx->cctx, ZSTD_c_compressionLevel, &zstdparam);
     }
 
     rvsp = ZSTD_CCtx_setParameter(ctx->cctx, ZSTD_c_nbWorkers, conf->workers);
@@ -153,8 +150,6 @@ static zstd_ctx_t *create_ctx(zstd_server_config_t* conf,
                       "[CREATE_CTX] ZSTD_c_nbWorkers(%d): %s",
                       conf->workers,
                       ZSTD_getErrorName(rvsp));
-    } else {
-        ZSTD_CCtx_getParameter(ctx->cctx, ZSTD_c_nbWorkers, &zstdparam);
     }
 
     apr_pool_cleanup_register(pool, ctx, cleanup_ctx, apr_pool_cleanup_null);

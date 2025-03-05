@@ -32,7 +32,7 @@ client.</description>
 <identifier>zstd_module</identifier>
 
 <summary>
-     <p>The <module>mod_deflate</module> module provides
+     <p>The <module>mod_zstd</module> module provides
     the <code>COMPRESS_ZSTD</code> output filter that allows output from
     your server to be compressed before being sent to the client over
     the network.</p>
@@ -42,7 +42,8 @@ client.</description>
 
 <section id="supportedencodings"><title>Supported Encodings</title>
   <p>The <code>Zstandard </code> encoding is the only one supported to ensure complete compatibility
-  with old browser implementations. ⚠️ > 19 fail on Browser (Chrome, Firefox)
+  with old browser implementations.<br>
+  ZstdCompressionLevel️ > 19 actually fail on Browser (Chrome, Firefox)
   </p>
 </section>
 
@@ -61,7 +62,7 @@ AddOutputFilterByType ZSTD_COMPRESStext/html text/plain text/xml text/php text/c
 <name>ZstdCompressionLevel</name>
 <description>CompressionLevel for zstd from 0 to 22</description>
 <syntax>ZstdCompressionLevel <var>value</var></syntax>
-<default>ZstdCompressionLevel 10</default>
+<default>ZstdCompressionLevel 15</default>
 <contextlist><context>server config</context><context>virtual host</context>
 </contextlist>
 
@@ -73,9 +74,9 @@ AddOutputFilterByType ZSTD_COMPRESStext/html text/plain text/xml text/php text/c
 </directivesynopsis>
 
 <directivesynopsis>
-<name>ZstdFilterNoteFilterNote</name>
+<name>ZstdFilterNote</name>
 <description>Places the compression ratio in a note for logging</description>
-<syntax>DeflateFilterNote [<var>type</var>] <var>notename</var></syntax>
+<syntax>ZstdFilterNote [<var>type</var>] <var>notename</var></syntax>
 <contextlist><context>server config</context><context>virtual host</context>
 </contextlist>
 

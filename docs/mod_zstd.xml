@@ -1,0 +1,123 @@
+<?xml version="1.0"?>
+<!DOCTYPE modulesynopsis SYSTEM "../style/modulesynopsis.dtd">
+<?xml-stylesheet type="text/xsl" href="../style/manual.en.xsl"?>
+<!-- $LastChangedRevision$ -->
+
+<!--
+ Licensed to the Apache Software Foundation (ASF) under one or more
+ contributor license agreements.  See the NOTICE file distributed with
+ this work for additional information regarding copyright ownership.
+ The ASF licenses this file to You under the Apache License, Version 2.0
+ (the "License"); you may not use this file except in compliance with
+ the License.  You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<modulesynopsis metafile="mod_zstd.xml.meta">
+
+<name>mod_zstd</name>
+
+<description>Compress content before it is delivered to the
+client.</description>
+
+<status>Extension</status>
+<sourcefile>mod_zstd.c</sourcefile>
+<identifier>zstd_module</identifier>
+
+<summary>
+     <p>The <module>mod_zstd</module> module provides
+    the <code>COMPRESS_ZSTD</code> output filter that allows output from
+    your server to be compressed before being sent to the client over
+    the network.</p>
+</summary>
+
+<seealso><a href="../filter.html">Filters</a></seealso>
+
+<section id="supportedencodings"><title>Supported Encodings</title>
+  <p>The <code>Zstandard </code> encoding is the only one supported to ensure complete compatibility
+  with old browser implementations.<br>
+  ZstdCompressionLevel️ > 19 actually fail on Browser (Chrome, Firefox)
+  </p>
+</section>
+
+<section id="recommended"><title>Sample Configurations</title>
+    <p>This is a simple configuration that compresses common text-based content types.</p>
+
+    <example><title>Compress only a few types</title>
+    <highlight language="config">
+AddOutputFilterByType ZSTD_COMPRESStext/html text/plain text/xml text/php text/css text/js text/javascript text/javascript-x application/x-javascript
+    </highlight>
+    </example>
+
+</section>
+
+<directivesynopsis>
+<name>ZstdCompressionLevel</name>
+<description>CompressionLevel for zstd from 0 to 22</description>
+<syntax>ZstdCompressionLevel <var>value</var></syntax>
+<default>ZstdCompressionLevel 15</default>
+<contextlist><context>server config</context><context>virtual host</context>
+</contextlist>
+
+<usage>
+    <p>The <directive>ZstdCompressionLevel</directive> directive specifies
+    the level of compression
+  </p>
+</usage>
+</directivesynopsis>
+
+<directivesynopsis>
+<name>ZstdFilterNote</name>
+<description>Places the compression ratio in a note for logging</description>
+<syntax>ZstdFilterNote [<var>type</var>] <var>notename</var></syntax>
+<contextlist><context>server config</context><context>virtual host</context>
+</contextlist>
+
+<usage>
+    <p>The <directive>ZstdFilterNote</directive> directive
+    specifies that a note about compression ratios should be attached
+    to the request. The name of the note is the value specified for
+    the directive. You can use that note for statistical purposes by
+    adding the value to your <a href="../logs.html#accesslog"
+    >access log</a>.</p>
+
+    <example><title>Example</title>
+    <highlight language="config">
+ZstdFilterNote zstd_ratio
+
+LogFormat '"%r" %{zstd_out}n/%{zstd_in}n (%{zstd_ratio}n)' zstd
+CustomLog "logs/zstd_log" LogFormat '"%r" %{zstd_out}n/%{zstd_in}n (%{zstd_ratio}n)' zstd
+
+    </highlight>
+    </example>
+</usage>
+<seealso><module>mod_log_config</module></seealso>
+</directivesynopsis>
+
+<directivesynopsis>
+<name>ZstdAlterETag</name>
+<description>Specifies how to change the ETag header when the response is compressed</description>
+<syntax>ZstdAlterETag <var>value</var></syntax>
+<default>ZstdCompressionLevel AddSuffix</default>
+<contextlist><context>server config</context><context>virtual host</context>
+</contextlist>
+
+<usage>
+    <p>The <directive>ZstdCoZstdAlterETag</directive> : AddSuffix, NoChange, Remove, (default: AddSuffix)
+  </p>
+  <example><title>Example</title>
+    <highlight language="config">
+ZstdAlterETag AddSuffix
+    </highlight>
+    </example>
+</usage>
+</directivesynopsis>
+
+</modulesynopsis>

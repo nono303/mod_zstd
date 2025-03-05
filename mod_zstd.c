@@ -50,7 +50,8 @@ static void *create_server_config(apr_pool_t *p, server_rec *s) {
     #else
         /*
          * https://facebook.github.io/zstd/zstd_manual.html#Chapter5
-         * Default value is `0`, aka "single-threaded mode" : no worker is spawned
+         * Default value is `0`, 
+         * aka "single-threaded mode" : no worker is spawned
          */
         conf->workers = 0;
     #endif
@@ -91,8 +92,12 @@ static const char *set_compression_level(cmd_parms *cmd, void *dummy,
 
     int val = atoi(arg);
     if (val < ZSTD_minCLevel() || val > ZSTD_maxCLevel()) {
-        return apr_psprintf(cmd->pool, "ZstdCompressionLevel must be between %d and %d",
-            ZSTD_minCLevel(), ZSTD_maxCLevel());
+        return apr_psprintf(
+            cmd->pool, 
+            "ZstdCompressionLevel must be between %d and %d",
+            ZSTD_minCLevel(), 
+            ZSTD_maxCLevel()
+        );
     }
 
     conf->compression_level = val;
@@ -420,7 +425,8 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb) {
                           conf->compression_level, conf->workers,
                           conf->note_input_name, ctx->total_in,
                           conf->note_output_name, ctx->total_out,
-                          conf->note_ratio_name, (int) (ctx->total_out * 100 / ctx->total_in));
+                          conf->note_ratio_name, 
+                          (int) (ctx->total_out * 100 / ctx->total_in));
             return rv;
 
         } else if (APR_BUCKET_IS_FLUSH(e)) {
@@ -470,8 +476,12 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb) {
     return APR_SUCCESS;
 }
 
-static apr_status_t zstd_post_config(apr_pool_t *p, apr_pool_t *plog,
-                                              apr_pool_t *ptemp, server_rec *s) {
+static apr_status_t zstd_post_config(
+        apr_pool_t *p, 
+        apr_pool_t *plog,
+        apr_pool_t *ptemp, 
+        server_rec *s
+    ) {
 
     zstd_server_config_t *conf;
     conf = ap_get_module_config(s->module_config, &zstd_module);

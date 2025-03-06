@@ -176,28 +176,56 @@ static apr_status_t process_bucket(zstd_ctx_t *ctx,
 
     ZSTD_inBuffer input = { data, len, 0 };
     size_t out_size = ZSTD_compressBound(len);
+    // size_t out_size = ZSTD_CStreamOutSize()
     char *out_buffer = apr_palloc(f->r->pool, out_size);
     ZSTD_outBuffer output = { out_buffer, out_size, 0 };
 
-    do {
-        /*
-         * https://facebook.github.io/zstd/zstd_manual.html#Chapter8
-         * ex. https://fossies.org/linux/cyrus-imapd/imap/httpd.c
-         */
-        remaining = ZSTD_compressStream2(ctx->cctx, &output, &input, mode);
-        if (ZSTD_isError(remaining)) {
-            ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r, APLOGNO(30305)
-                "Error while processing bucket: %s",
-                ZSTD_getErrorName(remaining));
-            return APR_EGENERAL;
-        }
-    } while (remaining || (input.pos != input.size));
+    if(mode == ZSTD_e_continue){
+        do {
+            /*
+             * https://facebook.github.io/zstd/zstd_manual.html#Chapter8
+             * ex. https://fossies.org/linux/cyrus-imapd/imap/httpd.c
+             */
+            remaining = ZSTD_compressStream2(ctx->cctx, &output, &input, mode);
+            if (ZSTD_isError(remaining)) {
+                ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r, APLOGNO(30305)
+                    "Error while processing bucket: %s",
+                    ZSTD_getErrorName(remaining));
+                return APR_EGENERAL;
+            }
+        } while (input.pos != input.size);
+
+        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r, "########################## ZSTD_e_continue");
+    } else if(mode == ZSTD_e_flush){
+        do {
+            remaining = ZSTD_flushStream(ctx->cctx, &output);
+            if (ZSTD_isError(remaining)) {
+                    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r, APLOGNO(30305)
+                        "Error while flushing bucket: %s",
+                        ZSTD_getErrorName(remaining));
+                    return APR_EGENERAL;
+                }
+            ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r, "########################## ZSTD_e_flush remaining=%d input.pos=%d input.size=%d output.pos=%d output.size=%d",remaining,input.pos,input.size,output.pos,output.size);
+        } while (remaining);
+	 } else if(mode == ZSTD_e_end){
+        do {
+			remaining = ZSTD_flushStream(ctx->cctx, &output);
+			if (ZSTD_isError(remaining)) {
+					ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r, APLOGNO(30305)
+						"Error while ending bucket: %s",
+						ZSTD_getErrorName(remaining));
+					return APR_EGENERAL;
+				}
+			ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r, "########################## ZSTD_e_end remaining=%d input.pos=%d input.size=%d output.pos=%d output.size=%d",remaining,input.pos,input.size,output.pos,output.size);
+		} while (remaining);
+    }
 
     if (output.pos > 0) {
         apr_bucket *b = apr_bucket_heap_create(out_buffer, output.pos,
                                                NULL, ctx->bb->bucket_alloc);
         ctx->total_out += output.pos;
         APR_BRIGADE_INSERT_TAIL(ctx->bb, b);
+        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r, "########################## INSERT_TAIL output.pos=%d",output.pos);
     }
 
     ctx->total_in += len;
@@ -374,6 +402,11 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb) {
     }
 
     apr_bucket *e;
+	
+	apr_off_t body_len;
+    apr_brigade_length(bb, 0, &body_len);
+	ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,"###################### body_len=%d",body_len);
+
     while ((e = APR_BRIGADE_FIRST(bb)) != APR_BRIGADE_SENTINEL(bb)) {
 
         /* Optimization: If we are a HEAD request and bytes_sent is not zero
@@ -459,7 +492,7 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb) {
                 return rv;
             }
 
-            rv = process_bucket(ctx, ZSTD_e_flush, data, len, f);
+            rv = process_bucket(ctx, ZSTD_e_continue, data, len, f);
             if (rv != APR_SUCCESS) {
                 return rv;
             }

@@ -454,7 +454,7 @@ static apr_status_t compress_filter(ap_filter_t *f, apr_bucket_brigade *bb) {
             apr_size_t len;
 
             // https://apr.apache.org/docs/apr/2.0/group___a_p_r___util___bucket___brigades.html#gae44ae938c6c60e148430fdb098dcf28f
-            rv = apr_bucket_read(e, &data, &len, APR_NONBLOCK_READ);
+            rv = apr_bucket_read(e, &data, &len, APR_BLOCK_READ);
             if (rv != APR_SUCCESS) {
                 return rv;
             }

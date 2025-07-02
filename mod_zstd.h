@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#define MOD_ZSTD_VERSION "1.0.2"
+#define MOD_ZSTD_VERSION "1.0.3"
 
 #define ZSTD_DEFAULT_COMPRESSION_LEVEL 15
 
